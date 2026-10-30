@@ -7,7 +7,9 @@ const KEY = "launch-key-1";
 const NAME = vmNameForKey(KEY);
 const DEFAULTS = { vcpus: 2, memMiB: 3072, grants: ["claude", "github"] };
 
-function harness(options: { skiff?: ReturnType<typeof fakeSkiff>; bootstrapFails?: boolean } = {}) {
+function harness(
+  options: { skiff?: ReturnType<typeof fakeSkiff>; bootstrapFails?: boolean; gitCredentialsForwarded?: () => Promise<boolean> } = {},
+) {
   const skiff = options.skiff ?? fakeSkiff();
   const tunnels = fakeTunnels();
   const bootstraps: string[] = [];
@@ -22,6 +24,7 @@ function harness(options: { skiff?: ReturnType<typeof fakeSkiff>; bootstrapFails
     },
     executorFor: () => noopExecutor,
     defaults: () => DEFAULTS,
+    gitCredentialsForwarded: options.gitCredentialsForwarded ?? (async () => false),
     log: (message) => logs.push(message),
   });
   return { provider, skiff, tunnels, bootstraps, logs };
@@ -148,5 +151,33 @@ describe("skiff machine provider", () => {
     expect(await h.provider.availability?.()).toMatchObject({ status: "setup-required", message: expect.stringContaining("skiff prepare") });
     expect(h.provider.id).toBe(PROVIDER_ID);
     expect(h.provider.ephemeral).toBe(true);
+  });
+
+  it("asks for setup while bb forwards its own GitHub credentials into machines", async () => {
+    const h = harness({ gitCredentialsForwarded: async () => true });
+    expect(await h.provider.availability?.()).toMatchObject({
+      status: "setup-required",
+      message: expect.stringContaining("bb settings general machineGitCredentialsEnabled false"),
+    });
+  });
+
+  it("refuses to boot a VM while bb forwards its own GitHub credentials into machines", async () => {
+    const h = harness({ gitCredentialsForwarded: async () => true });
+    const result = await h.provider.create(createContext().context);
+    expect(result).toMatchObject({ status: "failed", message: expect.stringContaining("machineGitCredentialsEnabled") });
+    expect(h.skiff.calls).toEqual([]);
+    expect(h.bootstraps).toEqual([]);
+  });
+
+  it("refuses to boot a VM when the credential setting cannot be read", async () => {
+    const h = harness({
+      gitCredentialsForwarded: async () => {
+        throw new Error("config unavailable");
+      },
+    });
+    const result = await h.provider.create(createContext().context);
+    expect(result).toMatchObject({ status: "failed", message: expect.stringContaining("config unavailable") });
+    expect(h.skiff.calls).toEqual([]);
+    expect(await h.provider.availability?.()).toMatchObject({ status: "unavailable", message: expect.stringContaining("config unavailable") });
   });
 });

@@ -17,6 +17,14 @@ const MINUTE = 60_000;
 /** Downloads Node, gh and Claude Code on a fresh guest; generous for a slow connection. */
 const PROVISION_TIMEOUT_MS = 20 * MINUTE;
 
+/**
+ * bb forwards the server's gh login into every machine unless this setting is off. In a skiff VM
+ * that would put a real token next to the broker's placeholders, so the provider refuses to run.
+ */
+const GIT_CREDENTIALS_MESSAGE =
+  "bb forwards its own GitHub login into machines, which would put a real token inside the VM. " +
+  "The skiff broker already serves git and gh: run `bb settings general machineGitCredentialsEnabled false`.";
+
 /** Optional per-launch overrides; `{}` is valid, so no frontend control is needed. */
 export const machineInputsSchema = z.object({
   vcpus: z.number().int().min(1).max(32).optional(),
@@ -40,6 +48,8 @@ export interface MachineProviderDeps {
   bootstrap: MachineBootstrapApi["bootstrap"];
   executorFor(name: string): MachineExecutor;
   defaults(): VmDefaults;
+  /** Whether bb's `machineGitCredentialsEnabled` setting is on. */
+  gitCredentialsForwarded(): Promise<boolean>;
   log(message: string): void;
 }
 
@@ -86,18 +96,28 @@ export function createSkiffMachineProvider(
     async availability() {
       try {
         await skiff.list();
-        return { status: "available" };
       } catch (error) {
         return {
           status: "setup-required",
           message: `skiff is not ready: ${cleanText(errorMessage(error), 300)}. Install skiff and run \`skiff prepare\`.`,
         };
       }
+      try {
+        if (await deps.gitCredentialsForwarded()) {
+          return { status: "setup-required", message: GIT_CREDENTIALS_MESSAGE };
+        }
+      } catch (error) {
+        return { status: "unavailable", message: `Cannot read bb's settings: ${cleanText(errorMessage(error), 300)}` };
+      }
+      return { status: "available" };
     },
 
     async create({ inputs, key, checkpoint, report, signal }) {
       const name = vmNameForKey(key);
       try {
+        if (await deps.gitCredentialsForwarded()) {
+          return { status: "failed", message: GIT_CREDENTIALS_MESSAGE };
+        }
         await ensureVm(name, inputs, report);
         signal.throwIfAborted();
         await checkpoint({ vm: name } satisfies MachineResource);

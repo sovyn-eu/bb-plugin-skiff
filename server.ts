@@ -64,6 +64,8 @@ export default async function plugin(bb: BbPluginApi) {
       bootstrap: (request) => bb.experimental_machines.bootstrap(request),
       executorFor: (name) => createSkiffExecutor(name),
       defaults,
+      gitCredentialsForwarded: async () =>
+        (await bb.sdk.system.config()).generalSettings.machineGitCredentialsEnabled,
       log,
     }),
   );
