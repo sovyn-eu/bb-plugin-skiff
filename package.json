@@ -1,0 +1,42 @@
+{
+  "name": "bb-plugin-skiff",
+  "version": "0.1.0",
+  "description": "Run each bb thread in a fresh skiff VM on this Mac",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "bb": ">=0.48",
+    "bbPluginSdk": ">=0.6.104"
+  },
+  "bb": {
+    "name": "Skiff VM [Experimental]",
+    "description": "Run each thread in a fresh Linux VM on this Mac, booted by skiff; credentials stay on the Mac behind the skiff broker.",
+    "branding": {
+      "icon": "Server"
+    },
+    "server": "./server.ts",
+    "skills": [
+      "skills"
+    ]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "build": "bb plugin build"
+  },
+  "dependencies": {
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.6.104",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^4.1.1",
+    "better-sqlite3": "^12.0.0",
+    "cron-parser": "^5.5.0",
+    "hono": "^4.11.9",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.1"
+  }
+}
