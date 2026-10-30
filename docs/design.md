@@ -56,15 +56,30 @@ checksummed scripts. `IS_SANDBOX=1` goes into `/etc/environment` so Claude Code 
 bypass-permissions modes as root. A warm pool or a skiff guest image with the software baked in
 is the obvious next step once the flow works end to end.
 
+## First live run (2026-10-30)
+
+`bb machine create --provider skiff-vm` on an M-series Mac with bb Connect as server access:
+
+| step | time |
+| --- | --- |
+| `skiff new` to running VM | 4 s |
+| provision (Node, gh, Claude Code) plus bb bootstrap | 49 s |
+| machine `active`, daemon `connected` | 53 s total |
+
+bb's bootstrap found Node in `/usr/local/bin` and enrolled its daemon without changes.
+`bb machine provider-cli status` reported Claude Code 2.1.301 at `/root/.local/bin/claude`.
+The skiff audit log showed `tunnel=open` and Claude Code's first `HEAD /claude/api/hello`
+answered through the broker. `bb machine remove` deleted the VM and the tunnel; `skiff gc`
+had nothing left to collect. A thread spawn through the composition is not yet exercised.
+
 ## Open items
 
-1. First live run: `skiff prepare` on this Mac fails inside the agent sandbox (hypervisor check),
-   so the e2e path is unverified. Run `bb plugin install .` and spawn a thread with
-   `--environment-provider skiff-vm-checkout` from a normal shell.
-2. Confirm that bb's bootstrap installer finds Node at `/usr/local/bin` and that its daemon runs
-   as a detached process (the guest has systemd, so a user unit is likely).
-3. Decide on git credentials (broker vs. bb forwarding) and document the outcome.
-4. Idle suspension: bb offers coordinated suspension; the plugin implements suspend and resume
+1. Spawn a thread through `skiff-vm-checkout` and watch the project clone and the first agent
+   turn inside the VM.
+2. Decide on git credentials: `bb machine env list` shows the built-in GH_TOKEN row as
+   "logged in", so bb forwards the server's gh token into VMs alongside the broker's
+   `/etc/gitconfig` rewrite. Turn one of them off and document the outcome.
+3. Idle suspension: bb offers coordinated suspension; the plugin implements suspend and resume
    but no idle timer yet.
-5. A frontend control for the `vcpus`/`memMiB` inputs; today they come from settings or
+4. A frontend control for the `vcpus`/`memMiB` inputs; today they come from settings or
    `--machine-inputs`.
