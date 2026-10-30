@@ -1,10 +1,8 @@
-Run every thread in its own Linux VM on your Mac. Nothing the agent installs or runs
-touches macOS, and the VM disappears with the thread.
-
 ## What you get
 
-- A **Skiff VM** entry in the environment picker: a fresh Ubuntu VM with a checkout of the
-  project, booted by skiff in seconds and enrolled as a bb machine.
+- A **Skiff VM** entry in the environment picker: a fresh Ubuntu 24.04 VM with a checkout of the
+  project, booted by skiff and enrolled as a bb machine. Agent, shell, package installs, git and
+  the bb daemon all run inside the VM.
 - Credentials that stay on the Mac. Claude Code and git in the VM talk to the skiff broker,
   which swaps placeholder tokens for the real ones from the macOS Keychain.
 - Suspend and resume through bb, and a `bb skiff` command to inspect the VMs.
@@ -12,10 +10,21 @@ touches macOS, and the VM disappears with the thread.
 ## How it works
 
 The plugin is a bb machine provider on top of the skiff CLI: `skiff new` boots the VM, a
-provision script installs Node, the GitHub CLI and Claude Code, bb enrolls its daemon over
-`skiff exec`, and `skiff tunnel` keeps the broker reachable. Archiving the thread removes the VM.
+provision script installs Node, the GitHub CLI and Claude Code (pinned versions, checked against
+the publishers' SHA-256 sums), bb enrolls its daemon over `skiff exec`, and `skiff tunnel` keeps
+the broker reachable. Archiving the thread removes the VM. A periodic sweep collects VMs that a
+failed launch left behind; VMs you create by hand are never touched.
 
 ## Requirements
 
-Apple Silicon, macOS 26, skiff prepared once, and a bb server access the VM can reach, such as
-bb Connect.
+- Apple Silicon and macOS 26.
+- [skiff](https://github.com/itlabs-gmbh/skiff), prepared once with `skiff prepare`, plus
+  `skiff secret set claude-token` and `skiff secret set github-token`. Use a fine-grained GitHub
+  token limited to the repositories agents should work on.
+- A bb server access the VM can reach, such as bb Connect. The VM cannot reach the Mac over the
+  local network.
+- bb's own GitHub forwarding turned off with
+  `bb settings general machineGitCredentialsEnabled false`. Skiff VM refuses to boot a VM while
+  it is on, so no real token reaches the guest.
+
+This plugin is experimental.

@@ -43,10 +43,11 @@ skiff's broker serves `claude` and `github` through placeholder tokens; the real
 the Keychain, and `skiff tunnel` must run on the Mac for the broker to answer. The plugin keeps
 one tunnel per live VM (ported from paseo-skiff's supervisor) and reopens them on every sweep.
 
-bb also forwards the server's gh login to non-primary hosts by default. That would place a token
-in the VM; `bb settings general machineGitCredentialsEnabled false` turns it off, and the broker
-already covers git and gh. Whether `GH_TOKEN` from bb and the broker's `/etc/gitconfig` rewrite
-interfere is unverified until the first live run.
+bb also forwards the server's gh login to non-primary hosts by default. That would place a real
+token in the VM next to the broker's placeholders. bb offers no per-machine switch, only the global
+`machineGitCredentialsEnabled` setting, so the provider reads it through `bb.sdk.system.config()`:
+while it is on, `availability()` reports setup required and `create()` fails before `skiff new`.
+If the setting cannot be read, `create()` fails too. The broker alone serves git and gh.
 
 ## Provisioning
 
@@ -70,16 +71,12 @@ bb's bootstrap found Node in `/usr/local/bin` and enrolled its daemon without ch
 `bb machine provider-cli status` reported Claude Code 2.1.301 at `/root/.local/bin/claude`.
 The skiff audit log showed `tunnel=open` and Claude Code's first `HEAD /claude/api/hello`
 answered through the broker. `bb machine remove` deleted the VM and the tunnel; `skiff gc`
-had nothing left to collect. A thread spawn through the composition is not yet exercised.
+had nothing left to collect. A thread spawn through `skiff-vm-checkout` followed: the project
+cloned into the VM and the agent ran its turns there.
 
 ## Open items
 
-1. Spawn a thread through `skiff-vm-checkout` and watch the project clone and the first agent
-   turn inside the VM.
-2. Decide on git credentials: `bb machine env list` shows the built-in GH_TOKEN row as
-   "logged in", so bb forwards the server's gh token into VMs alongside the broker's
-   `/etc/gitconfig` rewrite. Turn one of them off and document the outcome.
-3. Idle suspension: bb offers coordinated suspension; the plugin implements suspend and resume
+1. Idle suspension: bb offers coordinated suspension; the plugin implements suspend and resume
    but no idle timer yet.
-4. A frontend control for the `vcpus`/`memMiB` inputs; today they come from settings or
+2. A frontend control for the `vcpus`/`memMiB` inputs; today they come from settings or
    `--machine-inputs`.

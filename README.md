@@ -4,7 +4,7 @@ bb plugin that runs each thread in a fresh [skiff](https://github.com/itlabs-gmb
 your Mac. The agent, its shell, `npm install`, git and the bb daemon all run inside the VM. The
 Mac keeps the bb server and the credentials, which reach the VM only through the skiff broker.
 
-Modelled after [paseo-skiff](https://github.com/itlabs-gmbh/paseo-skiff), with bb's own machine
+Modelled after paseo-skiff, a skiff integration for Paseo, with bb's own machine
 provider API in place of Paseo's manual host registration. The design is in
 [docs/design.md](docs/design.md).
 
@@ -40,8 +40,9 @@ collected. VMs you create by hand have no owner and are never touched.
 - Tokens for the broker, once: `skiff secret set claude-token` and `skiff secret set github-token`.
   Every VM gets the `github` grant, so the token alone decides which repositories a VM can
   reach: use a fine-grained token limited to the repositories agents should work on.
-- Consider `bb settings general machineGitCredentialsEnabled false`, so bb does not forward the
-  server's own gh login into VMs; the broker already serves git and gh.
+- `bb settings general machineGitCredentialsEnabled false`, so bb does not forward the server's own
+  gh login into VMs; the broker already serves git and gh. While the setting is on, Skiff VM reports
+  setup required and refuses to boot a VM, so no real token reaches the guest.
 
 Set `SKIFF_BIN` in the bb server's environment if `skiff` is not in `~/go/bin`,
 `/opt/homebrew/bin` or `/usr/local/bin`.
