@@ -1,6 +1,6 @@
 # bb-plugin-skiff
 
-bb plugin that runs each thread in a fresh [skiff](https://github.com/itlabs-gmbh/skiff) VM on
+bb plugin that runs each thread in a fresh [skiff](https://github.com/sovyn-eu/skiff) VM on
 your Mac. The agent, its shell, `npm install`, git and the bb daemon all run inside the VM. The
 Mac keeps the bb server and the credentials, which reach the VM only through the skiff broker.
 
@@ -35,7 +35,7 @@ collected. VMs you create by hand have no owner and are never touched.
 - bb 0.48 or newer with a **server access** the VM can reach. A skiff VM cannot reach the Mac
   directly (its firewall rejects private networks), so use bb Connect, or a direct server URL
   that is reachable from the internet.
-- skiff, prepared once: `go install github.com/itlabs-gmbh/skiff/cmd/skiff@latest && skiff prepare`
+- skiff, prepared once: `go install github.com/sovyn-eu/skiff/cmd/skiff@latest && skiff prepare`
   (Apple Silicon, macOS 26, Apple's `container` CLI).
 - Tokens for the broker, once: `skiff secret set claude-token` and `skiff secret set github-token`.
   Every VM gets the `github` grant, so the token alone decides which repositories a VM can
