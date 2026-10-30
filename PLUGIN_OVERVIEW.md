@@ -21,6 +21,7 @@ failed launch left behind; VMs you create by hand are never touched.
 - [skiff](https://github.com/itlabs-gmbh/skiff), prepared once with `skiff prepare`, plus
   `skiff secret set claude-token` and `skiff secret set github-token`. Use a fine-grained GitHub
   token limited to the repositories agents should work on.
+- A project with a Git remote the VM can clone.
 - A bb server access the VM can reach, such as bb Connect. The VM cannot reach the Mac over the
   local network.
 - bb's own GitHub forwarding turned off with

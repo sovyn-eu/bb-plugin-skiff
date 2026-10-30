@@ -50,13 +50,14 @@ Set `SKIFF_BIN` in the bb server's environment if `skiff` is not in `~/go/bin`,
 ## Install
 
 ```sh
-bb plugin install /absolute/path/to/bb-plugin-skiff
+bb plugin install git:https://github.com/sovyn-eu/bb-plugin-skiff.git@^0.1.0
 ```
 
-Then pick **Skiff VM** in the composer's environment picker, or from a shell:
+Then pick **Skiff VM** in the composer's environment picker, or from a shell. The project needs a
+Git remote the VM can clone, since the checkout happens inside the VM:
 
 ```sh
-bb thread spawn --project <id> --environment-provider skiff-vm-checkout --prompt "..."
+bb thread spawn --project <id> --new-machine skiff-vm --environment-provider project-checkout --prompt "..."
 bb thread spawn ... --machine-inputs '{"vcpus":4,"memMiB":4096}'
 ```
 
