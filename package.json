@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-skiff",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Run each bb thread in a fresh skiff VM on this Mac",
   "license": "Apache-2.0",
   "type": "module",
@@ -9,7 +9,7 @@
     "bbPluginSdk": ">=0.6.104"
   },
   "bb": {
-    "name": "Skiff VM [Experimental]",
+    "name": "Skiff VM",
     "description": "Run each thread in a fresh Linux VM on this Mac, booted by skiff; credentials stay on the Mac behind the skiff broker.",
     "branding": {
       "icon": "Server"
