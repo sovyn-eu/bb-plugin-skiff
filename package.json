@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-skiff",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Run each bb thread in a fresh skiff VM on this Mac",
   "license": "Apache-2.0",
   "type": "module",
