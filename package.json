@@ -10,7 +10,7 @@
   },
   "bb": {
     "name": "Skiff VM",
-    "description": "Run each thread in a fresh Linux VM on this Mac, booted by skiff; credentials stay on the Mac behind the skiff broker.",
+    "description": "Run each thread in a fresh Linux VM on this Mac, booted by skiff; credentials stay on the Mac behind the skiff broker. What every VM gets is set in ~/.skiff/profile.toml.",
     "branding": {
       "icon": "Server"
     },

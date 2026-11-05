@@ -1,20 +1,22 @@
 import { execFile } from "node:child_process";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 import { VM_OWNER, requireVmName } from "./names";
 import { cleanText } from "./text";
 
-const GRANT = /^[a-z][a-z0-9-]*$/;
 /** A VM a concurrent create just made is not in the keep list yet; gc leaves VMs younger than this alone. */
 const GC_MIN_AGE = "5m";
 const MINUTE = 60_000;
 /**
- * skiff reads a repository profile from ./.skiff. Started from the bb server's directory
- * (often $HOME) that path is skiff's own state folder, ~/.skiff, and every `new` fails with
- * "read .skiff: is a directory". The root holds no profile, so only the machine default applies.
+ * skiff reads a repository profile from ./.skiff unless --profile names the files. Started from
+ * the bb server's directory (often $HOME) that path is skiff's own state folder, ~/.skiff. The
+ * plugin always passes --profile now; running from the root keeps every other command, and a
+ * future one that forgets --profile, away from a stray ./.skiff too.
  */
 export const SKIFF_CWD = "/";
+/** A profile setup downloads Node, gh and Claude Code on a fresh guest; generous for a slow connection. */
+const SETUP_TIMEOUT_MS = 25 * MINUTE;
 
 export const vmSchema = z.object({
   name: z.string().regex(/^[a-z][a-z0-9-]{0,30}$/),
@@ -28,9 +30,14 @@ export type Vm = z.infer<typeof vmSchema>;
 
 export interface CreateVmInput {
   name: string;
-  vcpus: number;
-  memMiB: number;
-  grants: readonly string[];
+  /** Only a launch's own size; the settings' size is in the plugin's profile. A flag beats every file. */
+  vcpus?: number;
+  memMiB?: number;
+  /**
+   * Absolute paths of the profile files, merged in order after the machine default: the
+   * plugin's (./profile.ts), then the project's .skiff when there is one.
+   */
+  profiles: readonly string[];
 }
 
 export interface RunOptions {
@@ -44,9 +51,20 @@ export interface Skiff {
   list(): Promise<Vm[]>;
   /** The VM with this name, or null when skiff does not know it. */
   find(name: string): Promise<Vm | null>;
-  create(input: CreateVmInput): Promise<Vm>;
-  /** Runs argv in the VM exactly as given; stdin and stdout are passed through. */
-  exec(name: string, argv: string[], options?: RunOptions): Promise<string>;
+  /**
+   * Boots a VM owned by bb and applies the profiles: setup, grants and guest settings. skiff
+   * refuses a file that is not trusted; the plugin trusts its own with `trustProfile`.
+   */
+  create(input: CreateVmInput, options?: { signal?: AbortSignal }): Promise<void>;
+  /** Applies the profiles again, setup included, to a running VM of an earlier attempt. */
+  apply(name: string, profiles: readonly string[], options?: { signal?: AbortSignal }): Promise<void>;
+  /** Records trust for one file as it is now; never called for a repository's .skiff. */
+  trustProfile(profile: string): Promise<void>;
+  /**
+   * Fails when skiff is older than 0.6.0 (before 0.5.0 a second --profile would replace the
+   * first) or cannot read the profile merged with a broken or clashing machine default.
+   */
+  checkProfile(profiles: readonly string[]): Promise<void>;
   start(name: string): Promise<void>;
   stop(name: string): Promise<void>;
   remove(name: string): Promise<void>;
@@ -73,11 +91,44 @@ function parseJson<T>(command: string, output: string, schema: z.ZodType<T>): T 
   return parsed.data;
 }
 
-function grantArgs(grants: readonly string[]): string[] {
-  return grants.flatMap((grant) => {
-    if (!GRANT.test(grant)) throw new Error(`Invalid grant: ${grant}`);
-    return ["--grant", grant];
-  });
+/**
+ * 0.5.0 made --profile repeatable with trust per file, 0.5.1 added --version, 0.6.0
+ * `allow_grants`, which the settings point users to.
+ */
+export const MIN_SKIFF_VERSION = [0, 6, 0] as const;
+const VERSION = /\bv?(\d+)\.(\d+)\.(\d+)/;
+
+/**
+ * Whether `skiff --version` output (`skiff version v0.6.0`) meets MIN_SKIFF_VERSION. A build
+ * without version information reports `dev`; that is someone working on skiff, so it passes.
+ */
+export function supportedSkiffVersion(output: string): boolean {
+  const text = output.trim();
+  if (/\bdev$/.test(text)) return true;
+  const match = VERSION.exec(text);
+  if (!match) return false;
+  const found = match.slice(1, 4).map(Number);
+  for (const [i, need] of MIN_SKIFF_VERSION.entries()) {
+    const have = found[i] ?? 0;
+    if (have !== need) return have > need;
+  }
+  return true;
+}
+
+/**
+ * No `--trust`: it would trust every file given, the project's .skiff included. The plugin
+ * trusts its own file beforehand (`trustProfile`); a .skiff needs the user's `skiff profile
+ * trust`, since it runs a script as root and picks grants.
+ */
+function profileArgs(profiles: readonly string[]): string[] {
+  if (profiles.length === 0) throw new Error("A VM needs at least one profile file");
+  return profiles.flatMap((profile) => ["--profile", requireAbsolute(profile)]);
+}
+
+/** skiff would resolve a relative path against its own working directory. */
+function requireAbsolute(path: string): string {
+  if (!isAbsolute(path)) throw new Error(`The profile path must be absolute: ${path}`);
+  return path;
 }
 
 export function createSkiff(run: Run): Skiff {
@@ -89,24 +140,40 @@ export function createSkiff(run: Run): Skiff {
       requireVmName(name);
       return (await list()).find((vm) => vm.name === name) ?? null;
     },
-    async create(input) {
+    async create(input, options = {}) {
       const args = [
         "new",
         requireVmName(input.name),
         "--owner",
         VM_OWNER,
-        "--vcpus",
-        String(input.vcpus),
-        "--mem",
-        String(input.memMiB),
-        ...grantArgs(input.grants),
-        "--json",
+        ...(input.vcpus === undefined ? [] : ["--vcpus", String(input.vcpus)]),
+        ...(input.memMiB === undefined ? [] : ["--mem", String(input.memMiB)]),
+        ...profileArgs(input.profiles),
       ];
-      // A boot takes seconds; the first `new` after a Mac reboot also starts the container service.
-      return parseJson("new", await run(args, { timeoutMs: 5 * MINUTE }), vmSchema);
+      // No --json: nothing uses the result, and callers look the VM up with `find`.
+      await run(args, { timeoutMs: SETUP_TIMEOUT_MS, signal: options.signal });
     },
-    exec(name, argv, options) {
-      return run(["exec", requireVmName(name), "--", ...argv], options);
+    async apply(name, profiles, options = {}) {
+      await run(["apply", requireVmName(name), "--setup", ...profileArgs(profiles)], {
+        timeoutMs: SETUP_TIMEOUT_MS,
+        signal: options.signal,
+      });
+    },
+    async trustProfile(profile) {
+      await run(["profile", "trust", requireAbsolute(profile)], { timeoutMs: MINUTE });
+    },
+    async checkProfile(profiles) {
+      let version: string;
+      try {
+        version = (await run(["--version"], { timeoutMs: MINUTE })).trim();
+      } catch {
+        version = "older than 0.5.1, which added --version";
+      }
+      if (!supportedSkiffVersion(version)) {
+        throw new Error(`skiff ${MIN_SKIFF_VERSION.join(".")} or newer is needed, this is ${version}`);
+      }
+      // `show` resolves and validates the merge, as `new` will; `lint FILE` checks the file alone.
+      await run(["profile", "show", ...profileArgs(profiles)], { timeoutMs: MINUTE });
     },
     async start(name) {
       await run(["start", requireVmName(name)], { timeoutMs: 5 * MINUTE });
