@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import type { MachineExecutor, MachineExecutorRequest } from "@get-bb/plugin-sdk";
 import { requireVmName } from "./names";
-import { skiffBinary, skiffEnvironment } from "./skiff";
+import { SKIFF_CWD, skiffBinary, skiffEnvironment } from "./skiff";
 
 /** skiff mirrors the remote exit status; 255 is its own "connection failed". */
 const CONNECTION_FAILED = 255;
@@ -39,7 +39,7 @@ function runExec(
       reject(request.signal.reason instanceof Error ? request.signal.reason : new Error("aborted"));
       return;
     }
-    const child = spawn(binary, args, { env, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(binary, args, { cwd: SKIFF_CWD, env, stdio: ["pipe", "pipe", "pipe"] });
     let settled = false;
     let killTimer: ReturnType<typeof setTimeout> | null = null;
 

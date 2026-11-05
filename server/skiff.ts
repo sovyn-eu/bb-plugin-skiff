@@ -9,6 +9,12 @@ const GRANT = /^[a-z][a-z0-9-]*$/;
 /** A VM a concurrent create just made is not in the keep list yet; gc leaves VMs younger than this alone. */
 const GC_MIN_AGE = "5m";
 const MINUTE = 60_000;
+/**
+ * skiff reads a repository profile from ./.skiff. Started from the bb server's directory
+ * (often $HOME) that path is skiff's own state folder, ~/.skiff, and every `new` fails with
+ * "read .skiff: is a directory". The root holds no profile, so only the machine default applies.
+ */
+export const SKIFF_CWD = "/";
 
 export const vmSchema = z.object({
   name: z.string().regex(/^[a-z][a-z0-9-]{0,30}$/),
@@ -140,6 +146,7 @@ export function createRun(lifetime: AbortSignal, env = skiffEnvironment()): Run 
         binary,
         args,
         {
+          cwd: SKIFF_CWD,
           env,
           signal,
           timeout: options.timeoutMs ?? 2 * MINUTE,

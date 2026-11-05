@@ -1,5 +1,23 @@
-import { describe, expect, it } from "vitest";
-import { createSkiff, skiffBinary, skiffEnvironment, type Run } from "./skiff";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { SKIFF_CWD, createRun, createSkiff, skiffBinary, skiffEnvironment, type Run } from "./skiff";
+
+const folders: string[] = [];
+afterEach(() => {
+  for (const path of folders.splice(0)) rmSync(path, { recursive: true, force: true });
+});
+
+/** A stand-in skiff that prints its working directory. */
+function pwdSkiff(): string {
+  const folder = mkdtempSync(join(tmpdir(), "bb-skiff-run-"));
+  folders.push(folder);
+  const binary = join(folder, "skiff");
+  writeFileSync(binary, "#!/bin/sh\npwd\n");
+  chmodSync(binary, 0o755);
+  return binary;
+}
 
 const vm = {
   name: "bb-0123456789ab",
@@ -92,6 +110,11 @@ describe("skiff CLI wrapper", () => {
     const { run, calls } = recorder({});
     await expect(createSkiff(run).remove("--all")).rejects.toThrow(/Invalid VM name/);
     expect(calls).toEqual([]);
+  });
+
+  it("runs skiff from a fixed directory so ./.skiff never resolves to ~/.skiff", async () => {
+    const run = createRun(new AbortController().signal, { ...process.env, SKIFF_BIN: pwdSkiff() });
+    expect((await run(["new"])).trim()).toBe(SKIFF_CWD);
   });
 
   it("finds skiff next to Go, Homebrew and /usr/local binaries, or where SKIFF_BIN points", () => {

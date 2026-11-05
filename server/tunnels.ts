@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { requireVmName } from "./names";
-import { skiffBinary, skiffEnvironment } from "./skiff";
+import { SKIFF_CWD, skiffBinary, skiffEnvironment } from "./skiff";
 
 export interface TunnelProcess {
   on(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): unknown;
@@ -86,6 +86,7 @@ export function createTunnels(options: {
 export function spawnTunnel(name: string, log: (message: string) => void): TunnelProcess {
   const env = skiffEnvironment();
   const child = spawn(skiffBinary(env), ["tunnel", requireVmName(name)], {
+    cwd: SKIFF_CWD,
     env,
     stdio: ["ignore", "ignore", "pipe"],
   });

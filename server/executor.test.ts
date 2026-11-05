@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createSkiffExecutor } from "./executor";
+import { SKIFF_CWD } from "./skiff";
 
 const folders: string[] = [];
 afterEach(() => {
@@ -41,6 +42,13 @@ describe("skiff executor", () => {
     expect(result.exitCode).toBe(3);
     expect(output.join("")).toContain("hello");
     expect(output.join("")).toContain("err");
+  });
+
+  it("runs skiff from a fixed directory so ./.skiff never resolves to ~/.skiff", async () => {
+    const executor = createSkiffExecutor("bb-test", { binary: fakeSkiff(), env: process.env });
+    const { output, request: req } = request(["pwd"]);
+    await executor.exec(req);
+    expect(output.join("").trim()).toBe(SKIFF_CWD);
   });
 
   it("kills the command when the timeout passes", async () => {
