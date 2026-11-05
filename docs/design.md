@@ -87,6 +87,20 @@ Three consequences shaped the code:
 Size moved from flags into the plugin's profile, so a `.skiff` merged after it can raise it;
 only a launch's own `--machine-inputs` stay flags, which beat every file.
 
+## NODE_OPTIONS does not reach the agent
+
+`[guest.env]` lands in `/etc/environment`, which the bb daemon inherits. bb's Claude Code
+provider starts Claude Code through the Claude Agent SDK, whose process transport runs
+`delete env.NODE_OPTIONS` before spawning, so the parent's Node flags do not leak into the
+child (it also drops `DEBUG` unless `DEBUG_CLAUDE_AGENT_SDK` is set). Other variables, such as
+`COREPACK_ENABLE_DOWNLOAD_PROMPT`, come through. The plugin cannot change that spawn, and copying
+`NODE_OPTIONS` into Claude Code's settings from its own setup script would depend on
+`/etc/environment` being written before the setup runs and would go stale after a
+`skiff apply` without `--setup`. Projects set it under `[claude.settings.env]` instead, which
+skiff renders to `/etc/claude-code/managed-settings.d/50-skiff.json`. Claude Code always loads
+managed settings, including when the SDK limits `settingSources`, and applies their `env` to
+the commands it runs.
+
 ## Who can change what a VM gets
 
 A short-lived version had a multi-line setting with a bb-only skiff profile. It was dropped

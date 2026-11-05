@@ -24,6 +24,23 @@ The VM reaches the Mac's credentials only through the skiff broker, which needs 
 problem stays, the Mac is missing a token: `skiff secret set claude-token` or
 `skiff secret set github-token`, run by the user on the Mac.
 
+## When NODE_OPTIONS is missing in the agent's shell
+
+bb starts Claude Code through the Claude Agent SDK, which removes `NODE_OPTIONS` from the
+environment it passes on. A value set only under `[guest.env]` therefore reaches
+`/etc/environment` and the bb daemon, but not the commands the agent runs. The project's
+`.skiff` (or `~/.skiff/profile.toml`) must also set it for Claude Code:
+
+```toml
+[claude.settings.env]
+NODE_OPTIONS = "--max-old-space-size=3072"
+```
+
+skiff writes this to `/etc/claude-code/managed-settings.d/50-skiff.json` in the VM. The
+change reaches the next VM once the user re-trusts the file on the Mac
+(`skiff profile trust <project>/.skiff`). `DEBUG` is dropped the same way; other
+`[guest.env]` values reach the agent's shell.
+
 ## What not to do
 
 Never run `skiff rm` or `skiff gc` yourself on a VM a thread is using; remove the thread's
