@@ -53,9 +53,78 @@ If the setting cannot be read, `create()` fails too. The broker alone serves git
 
 skiff has no golden images. Boot is two seconds; installing Node, gh and Claude Code plus bb's
 own daemon takes minutes per VM, as it does in paseo-skiff. The installers are the same pinned,
-checksummed scripts. `IS_SANDBOX=1` goes into `/etc/environment` so Claude Code accepts its
-bypass-permissions modes as root. A warm pool or a skiff guest image with the software baked in
-is the obvious next step once the flow works end to end.
+checksummed scripts.
+
+Since skiff 0.4.0 they travel as a skiff profile (`server/profile.ts`): `grants`, the
+installers as `[guest] setup` and `IS_SANDBOX=1` under `[guest.env]`, so Claude Code accepts its
+bypass-permissions modes as root. The plugin writes the file under a content-derived name in a
+private temporary directory and trusts it with `skiff profile trust <file>`: it wrote the file
+itself, and the name keeps skiff's trust record valid until the content changes. It does not
+pass `--trust` to `new`, which would trust every file given, the project's `.skiff` included. Before, the plugin piped its own script into `skiff exec sh -se` after `skiff new
+--grant`. The profile route has three advantages:
+
+- skiff runs the setup over plain ssh while it holds the VM's broker claim and agent lock, so
+  no credential is reachable while code downloaded from the internet runs as root.
+- The machine default `~/.skiff/profile.toml` is merged in, so the user's skills, packages,
+  agent plugins and MCP servers reach bb's VMs without plugin settings for each of them.
+- `skiff profile show --vm <name>` says what a VM was built from.
+
+Three consequences shaped the code:
+
+- The setup now runs inside `skiff new`, which may take longer than the five minutes after which
+  the reconcile sweep's `skiff gc --older-than 5m` collects VMs bb does not track. `create`
+  therefore checkpoints the VM name before `skiff new`; `remove` already copes with a VM that
+  never came to be.
+- A grant given as `--grant` to `skiff new` is applied only after the setup, so it would be lost
+  when the setup fails. The grants live in the profile instead, and `skiff apply --setup` with
+  the same file brings a VM of an interrupted attempt up to date. The setup skips what is
+  already installed and never downgrades.
+- The plugin calls `skiff new` without `--json`; nothing used its result, and skiff 0.4.0
+  mixed the setup's output into the JSON (fixed in 0.5.0).
+
+## Size in the profile
+
+Size moved from flags into the plugin's profile, so a `.skiff` merged after it can raise it;
+only a launch's own `--machine-inputs` stay flags, which beat every file.
+
+## Who can change what a VM gets
+
+A short-lived version had a multi-line setting with a bb-only skiff profile. It was dropped
+after reading bb's server (bb 0.48): requests made with a machine credential
+(`x-bb-gate-auth: machine`) are refused for host management, machine environment variables,
+enroll keys, CLI commands, app and server updates, but not for `PUT /api/v1/plugins/:id/settings`,
+plugin enable and disable, or the general settings. A skiff VM behind bb Connect holds such a
+credential in its daemon's configuration, and the agent runs as root. Whether the Connect gate
+filters these paths was not tested. If it does not, an agent could change this plugin's settings,
+and the plugin trusts the profile it writes from them.
+
+So the settings hold only what `allow_grants` can cap, the size and the grants, and everything
+else lives in `~/.skiff/profile.toml`, which nothing inside a VM can write. skiff 0.6.0 checks
+`allow_grants` for every `--profile` file before trust, so grants added to the settings behind
+the user's back are refused unless the user allowed them. The plugin requires 0.6.0 and points
+to `allow_grants` in the grants setting. The real fix is in bb: refuse machine credentials on
+those routes as it does for host management.
+
+## A project's .skiff
+
+skiff 0.5.0 takes `--profile` more than once and checks trust per file, so a VM gets the
+machine default, the plugin's profile and the project's `.skiff`, merged in that order.
+
+A machine provider is not told the project, but bb uses the thread id as the launch key of a
+thread's machine (`hosts.launch_key` joins `threads.id` in bb's server). The plugin resolves
+`threads.get(key)` → `projects.get(projectId).sources` → the first folder, default first, whose
+`.skiff` exists on this Mac. A key that is no thread (`404 thread_not_found`, as for
+`bb machine create`) means no `.skiff`; any other lookup failure fails the launch, since a VM
+silently built without the project's profile would look fine and lack what it needs. That the
+key is the thread id is bb's implementation, not a documented contract: if it changes, the
+lookup finds no thread and the VM is built as before.
+
+The plugin never trusts a `.skiff`. skiff refuses an untrusted one before booting, with what it
+would do, and the plugin adds the `skiff profile trust <path>` to run. Because the path is the
+folder on the Mac, the trust the user records there is exactly the trust skiff checks; an agent
+that changes `.skiff` in the VM cannot widen the next VM.
+
+A warm pool or a skiff guest image with the software baked in is the obvious next step.
 
 ## First live run (2026-10-30)
 

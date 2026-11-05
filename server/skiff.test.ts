@@ -2,7 +2,15 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { SKIFF_CWD, createRun, createSkiff, skiffBinary, skiffEnvironment, type Run } from "./skiff";
+import {
+  SKIFF_CWD,
+  createRun,
+  createSkiff,
+  skiffBinary,
+  skiffEnvironment,
+  supportedSkiffVersion,
+  type Run,
+} from "./skiff";
 
 const folders: string[] = [];
 afterEach(() => {
@@ -56,34 +64,74 @@ describe("skiff CLI wrapper", () => {
     expect(calls[0]?.args).toEqual(["ls", "--json"]);
   });
 
-  it("creates an owned VM with grants", async () => {
-    const { run, calls } = recorder({ new: JSON.stringify(vm) });
-    const created = await createSkiff(run).create({
+  it("creates an owned VM from its profiles, in order, without trusting any of them", async () => {
+    const { run, calls } = recorder({ new: "bb-0123456789ab is running\n" });
+    await createSkiff(run).create({
       name: vm.name,
       vcpus: 2,
       memMiB: 3072,
-      grants: ["claude", "github"],
+      profiles: ["/tmp/bb/vm-abc.toml", "/Users/me/dev/shop/.skiff"],
     });
-    expect(created.name).toBe(vm.name);
     expect(calls[0]?.args).toEqual([
       "new", vm.name, "--owner", "bb", "--vcpus", "2", "--mem", "3072",
-      "--grant", "claude", "--grant", "github", "--json",
+      "--profile", "/tmp/bb/vm-abc.toml", "--profile", "/Users/me/dev/shop/.skiff",
+    ]);
+    expect(calls[0]?.timeoutMs).toBeGreaterThanOrEqual(20 * 60_000);
+  });
+
+  it("leaves the size to the profiles unless the launch sets it", async () => {
+    const { run, calls } = recorder({ new: "" });
+    await createSkiff(run).create({ name: vm.name, memMiB: 8192, profiles: ["/tmp/bb/vm-abc.toml"] });
+    expect(calls[0]?.args).toEqual(["new", vm.name, "--owner", "bb", "--mem", "8192", "--profile", "/tmp/bb/vm-abc.toml"]);
+  });
+
+  it("applies the profiles with their setup to a VM of an earlier attempt", async () => {
+    const { run, calls } = recorder({ apply: "" });
+    await createSkiff(run).apply(vm.name, ["/tmp/bb/vm-abc.toml"]);
+    expect(calls[0]?.args).toEqual(["apply", vm.name, "--setup", "--profile", "/tmp/bb/vm-abc.toml"]);
+    expect(calls[0]?.timeoutMs).toBeGreaterThanOrEqual(20 * 60_000);
+  });
+
+  it("trusts one profile file by itself", async () => {
+    const { run, calls } = recorder({ profile: "" });
+    await createSkiff(run).trustProfile("/tmp/bb/vm-abc.toml");
+    expect(calls[0]?.args).toEqual(["profile", "trust", "/tmp/bb/vm-abc.toml"]);
+  });
+
+  it("checks the version, then the profile merged with the machine default", async () => {
+    const { run, calls } = recorder({ "--version": "skiff version v0.6.0\n", profile: "# sources: /tmp/bb/vm-abc.toml\n" });
+    await createSkiff(run).checkProfile(["/tmp/bb/vm-abc.toml"]);
+    expect(calls.map((call) => call.args)).toEqual([
+      ["--version"],
+      ["profile", "show", "--profile", "/tmp/bb/vm-abc.toml"],
     ]);
   });
 
-  it("refuses grants that are not plain capability names", async () => {
-    const { run, calls } = recorder({ new: JSON.stringify(vm) });
-    await expect(
-      createSkiff(run).create({ name: vm.name, vcpus: 2, memMiB: 2048, grants: ["github:acme/shop"] }),
-    ).rejects.toThrow(/Invalid grant/);
-    expect(calls).toEqual([]);
+  it("asks for skiff 0.6.0 when it is older or has no --version", async () => {
+    const old = recorder({ "--version": "skiff version v0.5.1\n" });
+    await expect(createSkiff(old.run).checkProfile(["/tmp/bb/vm-abc.toml"])).rejects.toThrow(
+      "skiff 0.6.0 or newer is needed, this is skiff version v0.5.1",
+    );
+    const ancient = recorder({});
+    await expect(createSkiff(ancient.run).checkProfile(["/tmp/bb/vm-abc.toml"])).rejects.toThrow(/older than 0\.5\.1/);
   });
 
-  it("runs commands with exact argv and stdin", async () => {
-    const { run, calls } = recorder({ exec: "ready\n" });
-    const output = await createSkiff(run).exec(vm.name, ["sh", "-se"], { stdin: "echo hi", timeoutMs: 1000 });
-    expect(output).toBe("ready\n");
-    expect(calls[0]).toEqual({ args: ["exec", vm.name, "--", "sh", "-se"], stdin: "echo hi", timeoutMs: 1000 });
+  it("compares versions numerically and lets development builds pass", () => {
+    expect(supportedSkiffVersion("skiff version v0.6.0")).toBe(true);
+    expect(supportedSkiffVersion("skiff version v0.10.0")).toBe(true);
+    expect(supportedSkiffVersion("skiff version v1.0.0")).toBe(true);
+    expect(supportedSkiffVersion("skiff version v0.6.1-0.20261105120000-abcdef123456+dirty")).toBe(true);
+    expect(supportedSkiffVersion("skiff version v0.5.9")).toBe(false);
+    expect(supportedSkiffVersion("skiff version dev")).toBe(true);
+    expect(supportedSkiffVersion("garbage")).toBe(false);
+  });
+
+  it("refuses relative or missing profile paths, which skiff would resolve against its own working directory", async () => {
+    const { run, calls } = recorder({ new: "" });
+    const skiff = createSkiff(run);
+    await expect(skiff.create({ name: vm.name, vcpus: 2, memMiB: 2048, profiles: ["vm.toml"] })).rejects.toThrow(/absolute/);
+    await expect(skiff.create({ name: vm.name, vcpus: 2, memMiB: 2048, profiles: [] })).rejects.toThrow(/at least one/);
+    expect(calls).toEqual([]);
   });
 
   it("starts, stops, removes and collects owned VMs", async () => {

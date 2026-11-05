@@ -6,9 +6,16 @@ import { vmNameForKey } from "./names";
 const KEY = "launch-key-1";
 const NAME = vmNameForKey(KEY);
 const DEFAULTS = { vcpus: 2, memMiB: 3072, grants: ["claude", "github"] };
+const PROFILE = "/tmp/bb-plugin-skiff/vm-0123.toml";
+const REPO_PROFILE = "/Users/me/dev/shop/.skiff";
 
 function harness(
-  options: { skiff?: ReturnType<typeof fakeSkiff>; bootstrapFails?: boolean; gitCredentialsForwarded?: () => Promise<boolean> } = {},
+  options: {
+    skiff?: ReturnType<typeof fakeSkiff>;
+    bootstrapFails?: boolean;
+    gitCredentialsForwarded?: () => Promise<boolean>;
+    repoProfile?: (key: string) => Promise<string | null>;
+  } = {},
 ) {
   const skiff = options.skiff ?? fakeSkiff();
   const tunnels = fakeTunnels();
@@ -24,6 +31,8 @@ function harness(
     },
     executorFor: () => noopExecutor,
     defaults: () => DEFAULTS,
+    profileFile: async () => PROFILE,
+    repoProfile: options.repoProfile ?? (async () => null),
     gitCredentialsForwarded: options.gitCredentialsForwarded ?? (async () => false),
     log: (message) => logs.push(message),
   });
@@ -55,20 +64,29 @@ describe("skiff machine provider", () => {
     expect(machineInputsSchema.safeParse({ memMiB: 512 }).success).toBe(false);
   });
 
-  it("boots a VM, checkpoints it, provisions it, enrolls bb and opens the broker tunnel", async () => {
+  it("checkpoints, boots a VM from the profile, enrolls bb and opens the broker tunnel", async () => {
     const h = harness();
+    const order: string[] = [];
     const { context, checkpoints, lines } = createContext({ inputs: { vcpus: 4 } });
-    const result = await h.provider.create(context);
+    const result = await h.provider.create({
+      ...context,
+      async checkpoint(resource) {
+        order.push(`checkpoint after ${h.skiff.calls.length} skiff calls`);
+        await context.checkpoint(resource);
+      },
+    });
     expect(result).toEqual({ status: "created", name: `skiff ${NAME}`, resource: { vm: NAME } });
     expect(h.skiff.calls).toEqual([
+      ["trust", PROFILE],
       ["find", NAME],
-      ["new", NAME, "4", "3072", "claude", "github"],
-      ["exec", NAME, "sh", "-se", "set -eu\numask 022\nex"],
+      ["new", NAME, "4", "-", PROFILE],
     ]);
+    // Before `skiff new`: its setup may outlast the five minutes after which gc collects untracked VMs.
+    expect(order).toEqual(["checkpoint after 0 skiff calls"]);
     expect(checkpoints).toEqual([{ vm: NAME }]);
     expect(h.bootstraps).toEqual([KEY]);
     expect(h.tunnels.events).toEqual([`ensure ${NAME}`]);
-    expect(lines).toContain(`step: Booting skiff VM ${NAME}`);
+    expect(lines).toContain(`step: Booting skiff VM ${NAME} and installing Node, GitHub CLI and Claude Code`);
     expect(lines).toContain("step: Enrolling the bb daemon");
   });
 
@@ -77,7 +95,79 @@ describe("skiff machine provider", () => {
     const h = harness({ skiff });
     const result = await h.provider.create(createContext().context);
     expect(result.status).toBe("created");
-    expect(h.skiff.calls.map((call) => call[0])).toEqual(["find", "start", "exec"]);
+    expect(h.skiff.calls).toEqual([
+      ["trust", PROFILE],
+      ["find", NAME],
+      ["start", NAME],
+      ["apply", NAME, PROFILE],
+    ]);
+  });
+
+  it("adds the project's .skiff after the plugin's profile and leaves its trust to the user", async () => {
+    const keys: string[] = [];
+    const h = harness({
+      repoProfile: async (key) => {
+        keys.push(key);
+        return REPO_PROFILE;
+      },
+    });
+    const { context, lines } = createContext();
+    expect((await h.provider.create(context)).status).toBe("created");
+    expect(keys).toEqual([KEY]);
+    expect(h.skiff.calls).toEqual([
+      ["trust", PROFILE],
+      ["find", NAME],
+      ["new", NAME, "-", "-", PROFILE, REPO_PROFILE],
+    ]);
+    expect(lines).toContain(`log: using the project's profile ${REPO_PROFILE}`);
+  });
+
+  it("reports an untrusted .skiff with skiff's explanation and does not enroll", async () => {
+    const h = harness({ repoProfile: async () => REPO_PROFILE });
+    h.skiff.failures.set("new", new Error(`skiff new failed: profile is not trusted: ${REPO_PROFILE} (it grants azure-devops); run 'skiff profile trust'`));
+    const result = await h.provider.create(createContext().context);
+    expect(result).toMatchObject({
+      status: "failed",
+      message: expect.stringContaining(`trust it on the Mac: skiff profile show --render --profile ${REPO_PROFILE} && skiff profile trust ${REPO_PROFILE}`),
+    });
+    expect(h.bootstraps).toEqual([]);
+  });
+
+  it("says how to fix grants of the settings that allow_grants refuses", async () => {
+    const h = harness();
+    h.skiff.failures.set(
+      "new",
+      new Error(`skiff new failed: profile ${PROFILE} asks for grants github, which ~/.skiff/profile.toml does not allow (allow_grants = claude)`),
+    );
+    const result = await h.provider.create(createContext().context);
+    expect(result).toMatchObject({ status: "failed", message: expect.stringContaining("add them to allow_grants in ~/.skiff/profile.toml") });
+  });
+
+  it("fails rather than boot without the project's profile when the lookup fails", async () => {
+    const h = harness({
+      repoProfile: async () => {
+        throw new Error("bb server unavailable");
+      },
+    });
+    const result = await h.provider.create(createContext().context);
+    expect(result).toEqual({ status: "failed", message: "bb server unavailable" });
+    expect(h.skiff.calls.filter((call) => call[0] === "new")).toEqual([]);
+  });
+
+  it("brings a running VM of an earlier attempt up to the profile again", async () => {
+    const skiff = fakeSkiff([{ name: NAME, state: "running", ip: "", owner: "bb", slot: "" }]);
+    const h = harness({ skiff });
+    expect((await h.provider.create(createContext().context)).status).toBe("created");
+    expect(h.skiff.calls.map((call) => call[0])).toEqual(["trust", "find", "apply"]);
+  });
+
+  it("reports a failed setup and leaves the VM for reconcileCleanup", async () => {
+    const h = harness();
+    h.skiff.failures.set("new", new Error("skiff new failed: setup of bb-x failed: exit status 1"));
+    const result = await h.provider.create(createContext().context);
+    expect(result).toEqual({ status: "failed", message: "skiff new failed: setup of bb-x failed: exit status 1" });
+    expect(h.bootstraps).toEqual([]);
+    expect(h.tunnels.events).toEqual([]);
   });
 
   it("reports a failed bootstrap instead of throwing and leaves the VM for reconcileCleanup", async () => {
@@ -91,7 +181,7 @@ describe("skiff machine provider", () => {
   it("propagates cancellation so core treats it as cancelled, not failed", async () => {
     const controller = new AbortController();
     const h = harness();
-    h.skiff.failures.set("exec", new Error("interrupted"));
+    h.skiff.failures.set("new", new Error("interrupted"));
     const { context } = createContext({ signal: controller.signal });
     controller.abort(new Error("cancelled by user"));
     await expect(h.provider.create(context)).rejects.toThrow(/cancelled by user/);
@@ -151,6 +241,15 @@ describe("skiff machine provider", () => {
     expect(await h.provider.availability?.()).toMatchObject({ status: "setup-required", message: expect.stringContaining("skiff prepare") });
     expect(h.provider.id).toBe(PROVIDER_ID);
     expect(h.provider.ephemeral).toBe(true);
+  });
+
+  it("asks for a newer skiff when it cannot read the plugin's profile", async () => {
+    const h = harness();
+    h.skiff.failures.set("check", new Error("skiff 0.6.0 or newer is needed, this is skiff v0.5.0"));
+    expect(await h.provider.availability?.()).toMatchObject({
+      status: "setup-required",
+      message: expect.stringContaining("skiff 0.6.0 or newer"),
+    });
   });
 
   it("asks for setup while bb forwards its own GitHub credentials into machines", async () => {

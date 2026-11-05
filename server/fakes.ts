@@ -23,16 +23,21 @@ export function fakeSkiff(initial: Vm[] = []) {
       return vms.get(name) ?? null;
     },
     async create(input: CreateVmInput) {
-      calls.push(["new", input.name, String(input.vcpus), String(input.memMiB), ...input.grants]);
+      calls.push(["new", input.name, String(input.vcpus ?? "-"), String(input.memMiB ?? "-"), ...input.profiles]);
       fail("new");
-      const vm: Vm = { name: input.name, state: "running", ip: "192.168.64.9", owner: "bb", slot: "" };
-      vms.set(vm.name, vm);
-      return vm;
+      vms.set(input.name, { name: input.name, state: "running", ip: "192.168.64.9", owner: "bb", slot: "" });
     },
-    async exec(name, argv, options) {
-      calls.push(["exec", name, ...argv, options?.stdin?.slice(0, 20) ?? ""]);
-      fail("exec");
-      return '{"node":"22.23.3","gh":"2.102.0","claude":"2.1.301"}\n';
+    async apply(name, profiles) {
+      calls.push(["apply", name, ...profiles]);
+      fail("apply");
+    },
+    async trustProfile(profile) {
+      calls.push(["trust", profile]);
+      fail("trust");
+    },
+    async checkProfile(profiles) {
+      calls.push(["check", ...profiles]);
+      fail("check");
     },
     async start(name) {
       calls.push(["start", name]);

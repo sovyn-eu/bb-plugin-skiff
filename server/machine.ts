@@ -5,7 +5,6 @@ import type {
 } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { vmNameForKey } from "./names";
-import { buildProvisionScript } from "./provision";
 import type { Skiff } from "./skiff";
 import { cleanText, errorMessage } from "./text";
 import type { Tunnels } from "./tunnels";
@@ -13,9 +12,7 @@ import type { Tunnels } from "./tunnels";
 export const PROVIDER_ID = "skiff-vm";
 export const COMPOSITION_ID = "skiff-vm-checkout";
 
-const MINUTE = 60_000;
-/** Downloads Node, gh and Claude Code on a fresh guest; generous for a slow connection. */
-const PROVISION_TIMEOUT_MS = 20 * MINUTE;
+const SKIFF_UPDATE = "go install github.com/sovyn-eu/skiff/cmd/skiff@latest";
 
 /**
  * bb forwards the server's gh login into every machine unless this setting is off. In a skiff VM
@@ -42,12 +39,18 @@ export interface VmDefaults {
   grants: readonly string[];
 }
 
+type Report = { step(text: string): void; log(text: string): void };
+
 export interface MachineProviderDeps {
   skiff: Skiff;
   tunnels: Tunnels;
   bootstrap: MachineBootstrapApi["bootstrap"];
   executorFor(name: string): MachineExecutor;
   defaults(): VmDefaults;
+  /** Writes the skiff profile for the current settings and returns its absolute path. */
+  profileFile(): Promise<string>;
+  /** The project's .skiff on this Mac for a launch key, or null (see ./repo-profile.ts). */
+  repoProfile(key: string): Promise<string | null>;
   /** Whether bb's `machineGitCredentialsEnabled` setting is on. */
   gitCredentialsForwarded(): Promise<boolean>;
   log(message: string): void;
@@ -58,25 +61,69 @@ export function createSkiffMachineProvider(
 ): PluginMachineProviderDeclaration<typeof machineInputsSchema> {
   const { skiff, tunnels, log } = deps;
 
-  async function ensureVm(name: string, inputs: MachineInputs, report: { step(text: string): void }) {
+  /**
+   * The profiles a VM is built from, in merge order after the machine default: the plugin's,
+   * whose setup installs Node, gh and Claude Code, then the project's .skiff. The plugin trusts
+   * only its own file; skiff refuses a .skiff the user has not trusted. `allow_grants` in
+   * ~/.skiff/profile.toml caps the grants of both, the plugin's included: settings that were
+   * changed behind the user's back cannot grant more than that.
+   */
+  async function profilesFor(key: string, report: Report): Promise<{ profiles: string[]; repo: string | null; own: string }> {
+    const own = await deps.profileFile();
+    const repo = await deps.repoProfile(key);
+    await skiff.trustProfile(own);
+    if (repo === null) return { profiles: [own], repo, own };
+    report.log(`using the project's profile ${repo}`);
+    return { profiles: [own, repo], repo, own };
+  }
+
+  /**
+   * skiff's refusals suggest --grant, --trust and --no-profile, which bb users cannot pass;
+   * name the fix that applies in bb.
+   */
+  function explainRefusal(message: string, own: string, repo: string | null): string {
+    if (message.includes(own) && /does not allow/.test(message)) {
+      return `${message}\nThe Skiff VM settings grant these: add them to allow_grants in ~/.skiff/profile.toml, or remove them from the settings.`;
+    }
+    if (repo === null || !/not trusted/.test(message)) return message;
+    return `${message}\nRead it, then trust it on the Mac: skiff profile show --render --profile ${repo} && skiff profile trust ${repo}`;
+  }
+
+  /**
+   * Boots the VM from the profiles, or brings the VM of an earlier attempt up to them again:
+   * that attempt may have stopped mid-setup.
+   */
+  async function ensureVm(name: string, key: string, inputs: MachineInputs, report: Report, signal: AbortSignal) {
+    const { profiles, repo, own } = await profilesFor(key, report);
+    try {
+      await bootOrApply(name, profiles, inputs, report, signal);
+    } catch (error) {
+      throw new Error(explainRefusal(errorMessage(error), own, repo), { cause: error });
+    }
+  }
+
+  async function bootOrApply(
+    name: string,
+    profiles: readonly string[],
+    inputs: MachineInputs,
+    report: Report,
+    signal: AbortSignal,
+  ) {
     const existing = await skiff.find(name);
     if (existing === null) {
-      const defaults = deps.defaults();
-      report.step(`Booting skiff VM ${name}`);
-      await skiff.create({
-        name,
-        vcpus: inputs.vcpus ?? defaults.vcpus,
-        memMiB: inputs.memMiB ?? defaults.memMiB,
-        grants: defaults.grants,
-      });
+      report.step(`Booting skiff VM ${name} and installing Node, GitHub CLI and Claude Code`);
+      // The settings' size is in the plugin's profile, where a project's .skiff can raise it.
+      await skiff.create({ name, vcpus: inputs.vcpus, memMiB: inputs.memMiB, profiles }, { signal });
       return;
     }
     if (existing.state === "stopped") {
       report.step(`Starting skiff VM ${name} from an earlier attempt`);
       await skiff.start(name);
-      return;
+    } else {
+      report.step(`Reusing skiff VM ${name} from an earlier attempt`);
     }
-    report.step(`Reusing skiff VM ${name} from an earlier attempt`);
+    report.step(`Applying the profile to ${name}`);
+    await skiff.apply(name, profiles, { signal });
   }
 
   async function removeVm(name: string): Promise<void> {
@@ -103,6 +150,16 @@ export function createSkiffMachineProvider(
         };
       }
       try {
+        await skiff.checkProfile([await deps.profileFile()]);
+      } catch (error) {
+        return {
+          status: "setup-required",
+          message:
+            `skiff cannot read the VM profile: ${cleanText(errorMessage(error), 300)}. ` +
+            `It needs skiff 0.6.0 or newer (\`${SKIFF_UPDATE}\`) and a valid ~/.skiff/profile.toml (\`skiff profile lint\`).`,
+        };
+      }
+      try {
         if (await deps.gitCredentialsForwarded()) {
           return { status: "setup-required", message: GIT_CREDENTIALS_MESSAGE };
         }
@@ -118,17 +175,11 @@ export function createSkiffMachineProvider(
         if (await deps.gitCredentialsForwarded()) {
           return { status: "failed", message: GIT_CREDENTIALS_MESSAGE };
         }
-        await ensureVm(name, inputs, report);
-        signal.throwIfAborted();
+        // Before the VM exists: the setup inside `skiff new` can take longer than the five
+        // minutes after which the reconcile sweep's `skiff gc` collects VMs bb does not track.
+        // remove() copes with a checkpointed VM that never came to be.
         await checkpoint({ vm: name } satisfies MachineResource);
-
-        report.step("Installing Node, GitHub CLI and Claude Code");
-        const versions = await skiff.exec(name, ["sh", "-se"], {
-          stdin: buildProvisionScript(),
-          timeoutMs: PROVISION_TIMEOUT_MS,
-          signal,
-        });
-        report.log(`installed: ${cleanText(versions.trim(), 300)}`);
+        await ensureVm(name, key, inputs, report, signal);
         signal.throwIfAborted();
 
         report.step("Enrolling the bb daemon");
