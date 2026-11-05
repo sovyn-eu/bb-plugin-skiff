@@ -108,6 +108,26 @@ After every change to the file, trust it again. An agent that edits `.skiff` the
 widen the next VM: its change reaches a VM only once it is in the folder on the Mac and you
 trusted it. The file is read from the Mac's checkout, not from the branch the thread works on.
 
+### Environment variables for the agent
+
+`[guest.env]` goes into `/etc/environment`, and the agent's shell inherits it, except for
+`NODE_OPTIONS` (and `DEBUG`). bb starts Claude Code through the Claude Agent SDK, which removes
+`NODE_OPTIONS` from the environment it passes on, so the bb daemon has it and `pnpm test`
+in the agent's shell does not. Set it for Claude Code as well. skiff writes
+`[claude.settings]` to `/etc/claude-code/managed-settings.d/50-skiff.json`, and Claude Code
+applies its `env` to every session and to the commands it runs:
+
+```toml
+[guest.env]
+NODE_OPTIONS = "--max-old-space-size=3072"   # login shells, the bb daemon, setup scripts
+
+[claude.settings.env]
+NODE_OPTIONS = "--max-old-space-size=3072"   # the agent's commands
+```
+
+To check, run `skiff exec bb-<key> -- cat /etc/claude-code/managed-settings.d/50-skiff.json`, or
+ask the agent to run `echo $NODE_OPTIONS`.
+
 ## Development
 
 ```sh
