@@ -29,7 +29,8 @@ see the [skiff website](https://sovyn-eu.github.io/skiff/).
 ## Requirements
 
 - Apple Silicon and macOS 26.
-- [skiff](https://github.com/sovyn-eu/skiff) 0.6.0 or newer, prepared once with `skiff prepare`, plus
+- [skiff](https://github.com/sovyn-eu/skiff) 0.6.0 or newer (`brew install sovyn-eu/tap/skiff` after
+  `brew tap sovyn-eu/tap` and `brew trust --formula sovyn-eu/tap/skiff`), prepared once with `skiff prepare`, plus
   `skiff secret set claude-token` and `skiff secret set github-token`. Use a fine-grained GitHub
   token limited to the repositories agents should work on.
 - A project with a Git remote the VM can clone.

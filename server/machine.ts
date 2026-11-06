@@ -12,7 +12,8 @@ import type { Tunnels } from "./tunnels";
 export const PROVIDER_ID = "skiff-vm";
 export const COMPOSITION_ID = "skiff-vm-checkout";
 
-const SKIFF_UPDATE = "go install github.com/sovyn-eu/skiff/cmd/skiff@latest";
+const SKIFF_INSTALL_DOCS = "https://github.com/sovyn-eu/skiff#install";
+const SKIFF_UPDATE = "brew upgrade sovyn-eu/tap/skiff";
 
 /**
  * bb forwards the server's gh login into every machine unless this setting is off. In a skiff VM
@@ -146,7 +147,7 @@ export function createSkiffMachineProvider(
       } catch (error) {
         return {
           status: "setup-required",
-          message: `skiff is not ready: ${cleanText(errorMessage(error), 300)}. Install skiff and run \`skiff prepare\`.`,
+          message: `skiff is not ready: ${cleanText(errorMessage(error), 300)}. Install skiff (${SKIFF_INSTALL_DOCS}) and run \`skiff prepare\`.`,
         };
       }
       try {
@@ -156,7 +157,7 @@ export function createSkiffMachineProvider(
           status: "setup-required",
           message:
             `skiff cannot read the VM profile: ${cleanText(errorMessage(error), 300)}. ` +
-            `It needs skiff 0.6.0 or newer (\`${SKIFF_UPDATE}\`) and a valid ~/.skiff/profile.toml (\`skiff profile lint\`).`,
+            `It needs skiff 0.6.0 or newer (\`${SKIFF_UPDATE}\`, or see ${SKIFF_INSTALL_DOCS}) and a valid ~/.skiff/profile.toml (\`skiff profile lint\`).`,
         };
       }
       try {

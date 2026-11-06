@@ -165,10 +165,11 @@ describe("skiff CLI wrapper", () => {
     expect((await run(["new"])).trim()).toBe(SKIFF_CWD);
   });
 
-  it("finds skiff next to Go, Homebrew and /usr/local binaries, or where SKIFF_BIN points", () => {
-    const env = skiffEnvironment({ PATH: "/usr/bin" });
-    expect(env.PATH?.split(":")).toEqual(expect.arrayContaining(["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]));
-    expect(env.PATH?.split(":")[0]).toMatch(/\/go\/bin$/);
+  it("finds skiff in Homebrew, /usr/local and Go binaries, or where SKIFF_BIN points", () => {
+    const path = skiffEnvironment({ PATH: "/usr/bin" }).PATH?.split(":") ?? [];
+    expect(path.slice(0, 2)).toEqual(["/opt/homebrew/bin", "/usr/local/bin"]);
+    expect(path[2]).toMatch(/\/go\/bin$/);
+    expect(path.at(-1)).toBe("/usr/bin");
     expect(skiffBinary({})).toBe("skiff");
     expect(skiffBinary({ SKIFF_BIN: " /tmp/skiff " })).toBe("/tmp/skiff");
   });

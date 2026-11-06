@@ -44,10 +44,19 @@ collected. VMs you create by hand have no owner and are never touched.
 - bb 0.48 or newer with a **server access** the VM can reach. A skiff VM cannot reach the Mac
   directly (its firewall rejects private networks), so use bb Connect, or a direct server URL
   that is reachable from the internet.
-- skiff 0.6.0 or newer (profiles, repeatable `--profile`, `allow_grants`), prepared once:
-  `go install github.com/sovyn-eu/skiff/cmd/skiff@latest && skiff prepare`
-  (Apple Silicon, macOS 26, Apple's `container` CLI). With an older skiff, Skiff VM reports
-  setup required.
+- skiff 0.6.0 or newer (profiles, repeatable `--profile`, `allow_grants`), prepared once.
+  Since 0.7.0 skiff installs with Homebrew as a prebuilt binary:
+
+  ```sh
+  brew tap sovyn-eu/tap
+  brew trust --formula sovyn-eu/tap/skiff   # Homebrew 7 loads third-party formulas only once trusted
+  brew install sovyn-eu/tap/skiff
+  skiff prepare
+  ```
+
+  `brew upgrade skiff` picks up new releases. With Go 1.26+ you can build it instead:
+  `go install github.com/sovyn-eu/skiff/cmd/skiff@latest`. skiff needs Apple Silicon, macOS 26
+  and Apple's `container` CLI. With an older skiff, Skiff VM reports setup required.
 - Tokens for the broker, once: `skiff secret set claude-token` and `skiff secret set github-token`.
   Every VM gets the `github` grant, so the token alone decides which repositories a VM can
   reach: use a fine-grained token limited to the repositories agents should work on.
@@ -55,8 +64,9 @@ collected. VMs you create by hand have no owner and are never touched.
   gh login into VMs; the broker already serves git and gh. While the setting is on, Skiff VM reports
   setup required and refuses to boot a VM, so no real token reaches the guest.
 
-Set `SKIFF_BIN` in the bb server's environment if `skiff` is not in `~/go/bin`,
-`/opt/homebrew/bin` or `/usr/local/bin`.
+Set `SKIFF_BIN` in the bb server's environment if `skiff` is not in `/opt/homebrew/bin`,
+`/usr/local/bin` or `~/go/bin` (searched in that order, so a Homebrew skiff wins over an old
+`go install` build).
 
 ## Install
 

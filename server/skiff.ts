@@ -193,9 +193,13 @@ export function createSkiff(run: Run): Skiff {
   };
 }
 
-/** The bb server may run without a login shell's PATH; skiff needs `container` and `ssh`. */
+/**
+ * The bb server may run without a login shell's PATH; skiff needs `container` and `ssh`.
+ * Homebrew comes first: since 0.7.0 that is how skiff installs, and a `go install` build left
+ * behind in ~/go/bin from before would otherwise shadow the upgraded binary.
+ */
 export function skiffEnvironment(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const extra = [join(homedir(), "go", "bin"), "/opt/homebrew/bin", "/usr/local/bin"];
+  const extra = ["/opt/homebrew/bin", "/usr/local/bin", join(homedir(), "go", "bin")];
   const path = [...extra, env.PATH ?? "/usr/bin:/bin:/usr/sbin:/sbin"].join(":");
   return { ...env, PATH: path };
 }
